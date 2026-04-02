@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebRTC Tunnel Client</title>
+</head>
+<body>
+    <h2>WebRTC Tunnel Client</h2>
+    <div>
+        <textarea id="offer" rows="5" cols="80" placeholder="Вставь сюда offer из терминала"></textarea>
+        <br/>
+        <button id="connect">Подключиться</button>
+    </div>
+    <div>
+        <h3>Ответ (answer):</h3>
+        <textarea id="answer" rows="5" cols="80" readonly></textarea>
+        <p id="status">Не подключено</p>
+    </div>
+    <hr/>
+    <div>
+        <input type="text" id="url" value="/" size="50" placeholder="URL (например / или /api/data)"/>
+        <button id="send">Запросить</button>
+    </div>
+    <div id="output" style="border:1px solid #ccc; padding:10px; margin-top:10px;"></div>
+
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <script>
+        let dataChannel = null;
+        let peerConnection = null;
+
+        document.getElementById('connect').onclick = async () => {
+            const offerSdp = document.getElementById('offer').value;
+            if (!offerSdp) {
+                alert('Вставь offer из терминала');
+                return;
+            }
+
+            const offer = JSON.parse(offerSdp);
+            
+            // Создаем RTCPeerConnection с STUN серверами
+            peerConnection = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            });
+
+            peerConnection.ondatachannel = (event) => {
+                dataChannel = event.channel;
+                setupDataChannel();
+            };
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    console.log('ICE candidate:', event.candidate);
+                }
+            };
+
+            await peerConnection.setRemoteDescription(offer);
+            
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            
+            document.getElementById('answer').value = JSON.stringify(peerConnection.localDescription);
+            document.getElementById('status').innerHTML = 'Подключено, скопируй answer в терминал';
+        };
+
+        function setupDataChannel() {
+            dataChannel.onopen = () => {
+                document.getElementById('status').innerHTML = 'Канал открыт, можно отправлять запросы';
+            };
+            
+            dataChannel.onmessage = (event) => {
+                document.getElementById('output').innerHTML = event.data;
+            };
+            
+            dataChannel.onerror = (error) => {
+                console.error('Ошибка:', error);
+            };
+        }
+
+        document.getElementById('send').onclick = () => {
+            if (!dataChannel || dataChannel.readyState !== 'open') {
+                alert('Канал не открыт');
+                return;
+            }
+            const url = document.getElementById('url').value;
+            dataChannel.send(url);
+            document.getElementById('output').innerHTML = 'Загрузка...';
+        };
+    </script>
+</body>
+</html>
