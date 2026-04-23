@@ -7,11 +7,23 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+fn format_hex(data: &[u8], pairs_per_line: usize) -> String {
+    let hex_pairs: Vec<String> = data.iter()
+        .map(|b| format!("{:02x}", b))
+        .map(|it| it.to_uppercase())
+        .collect();
+
+    hex_pairs
+        .chunks(pairs_per_line)
+        .map(|chunk| chunk.join("-"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let http_client = reqwest::Client::new();
     
-    // STUN от Google
     let config = RTCConfiguration {
         ice_servers: vec![RTCIceServer {
             urls: vec!["stun:stun.l.google.com:19302".to_owned()],
@@ -23,11 +35,9 @@ async fn main() -> anyhow::Result<()> {
     let api = APIBuilder::new().build();
     let peer_connection = Arc::new(api.new_peer_connection(config).await?);
     
-    // Создаем data channel
     let data_channel = peer_connection.create_data_channel("http-tunnel", None).await?;
     let dc_clone = data_channel.clone();
     
-    // Обработка сообщений от клиента
     data_channel.on_message(Box::new(move |msg| {
         let http_client = http_client.clone();
         let dc = dc_clone.clone();
@@ -41,20 +51,23 @@ async fn main() -> anyhow::Result<()> {
         })
     }));
     
-    // Создаем offer
     let offer = peer_connection.create_offer(None).await?;
     peer_connection.set_local_description(offer).await?;
     
-    // Ждем ICE gathering
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     
-    // Печатаем SDP offer (копировать в браузер)
     let local_desc = peer_connection.local_description().await.unwrap();
     let sdp = serde_json::to_string(&local_desc)?;
-    println!("\n=== COPY TO BROWSER ===\n{}\n", sdp);
+    let sdp_bytes = sdp.as_bytes();
     
-    // Ждем answer из stdin
-    println!("Paste aswer here and press Enter:");
+    // JSON
+    println!("\n=== COPY TO BROWSER (JSON) ===\n{}\n", sdp);
+    
+    // HEX
+    let formatted = format_hex(sdp_bytes, 30);
+    println!("=== COPY TO BROWSER (HEX) ===\n\n{}\n", formatted);
+    
+    println!("Paste answer here and press Enter:");
     let stdin = BufReader::new(tokio::io::stdin());
     let mut lines = stdin.lines();
     let answer_json = lines.next_line().await?.unwrap();
@@ -62,7 +75,6 @@ async fn main() -> anyhow::Result<()> {
     
     peer_connection.set_remote_description(answer).await?;
     
-    // Ждем соединения через канал
     let (tx, mut rx) = mpsc::unbounded_channel();
     let pc = peer_connection.clone();
     pc.on_peer_connection_state_change(Box::new(move |state| {

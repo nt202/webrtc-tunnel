@@ -5,8 +5,21 @@
 </head>
 <body>
     <h2>WebRTC Tunnel Client</h2>
+    
     <div>
-        <textarea id="offer" rows="5" cols="80" placeholder="Вставь сюда offer из терминала"></textarea>
+        <label>
+            <input type="radio" name="inputType" value="json" checked> 
+            Обычный JSON
+        </label>
+        <label>
+            <input type="radio" name="inputType" value="hex"> 
+            HEX
+        </label>
+    </div>
+    <br>
+    
+    <div>
+        <textarea id="offer" rows="10" cols="80" placeholder="Вставь сюда offer из терминала"></textarea>
         <br/>
         <button id="connect">Подключиться</button>
     </div>
@@ -22,43 +35,83 @@
     </div>
     <div id="output" style="border:1px solid #ccc; padding:10px; margin-top:10px;"></div>
 
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js "></script>
     <script>
         let dataChannel = null;
         let peerConnection = null;
 
+        function hexToBytes(hexStr) {
+            // Заменяем кириллические символы, похожие на латинские
+            const latinized = hexStr
+                .replace(/А/g, 'A')  // кириллическая А -> латинская A
+                .replace(/В/g, 'B')  // кириллическая В -> латинская B
+                .replace(/С/g, 'C')  // кириллическая С -> латинская C
+                .replace(/Е/g, 'E'); // кириллическая Е -> латинская E
+            
+            // Удаляем все не-hex символы (пробелы, дефисы, переводы строк, табы и т.д.)
+            const cleaned = latinized.replace(/[^0-9a-fA-F]/g, '');
+            
+            if (cleaned.length % 2 !== 0) {
+                throw new Error('Нечётное количество hex-символов');
+            }
+            
+            const bytes = new Uint8Array(cleaned.length / 2);
+            for (let i = 0; i < cleaned.length; i += 2) {
+                bytes[i / 2] = parseInt(cleaned.substring(i, i + 2), 16);
+            }
+            return bytes;
+        }
+
+        function bytesToString(bytes) {
+            return new TextDecoder().decode(bytes);
+        }
+
         document.getElementById('connect').onclick = async () => {
-            const offerSdp = document.getElementById('offer').value;
-            if (!offerSdp) {
+            const rawInput = document.getElementById('offer').value;
+            if (!rawInput) {
                 alert('Вставь offer из терминала');
                 return;
             }
 
-            const offer = JSON.parse(offerSdp);
-            
-            // Создаем RTCPeerConnection с STUN серверами
-            peerConnection = new RTCPeerConnection({
-                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-            });
+            const inputType = document.querySelector('input[name="inputType"]:checked').value;
+            let offerSdp;
 
-            peerConnection.ondatachannel = (event) => {
-                dataChannel = event.channel;
-                setupDataChannel();
-            };
-
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    console.log('ICE candidate:', event.candidate);
+            try {
+                if (inputType === 'hex') {
+                    const decodedBytes = hexToBytes(rawInput);
+                    offerSdp = bytesToString(decodedBytes);
+                } else {
+                    offerSdp = rawInput;
                 }
-            };
 
-            await peerConnection.setRemoteDescription(offer);
-            
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            
-            document.getElementById('answer').value = JSON.stringify(peerConnection.localDescription);
-            document.getElementById('status').innerHTML = 'Подключено, скопируй answer в терминал';
+                const offer = JSON.parse(offerSdp);
+                
+                peerConnection = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                peerConnection.ondatachannel = (event) => {
+                    dataChannel = event.channel;
+                    setupDataChannel();
+                };
+
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        console.log('ICE candidate:', event.candidate);
+                    }
+                };
+
+                await peerConnection.setRemoteDescription(offer);
+                
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+                
+                document.getElementById('answer').value = JSON.stringify(peerConnection.localDescription);
+                document.getElementById('status').innerHTML = 'Подключено, скопируй answer в терминал';
+            } catch (err) {
+                alert('Ошибка: ' + err.message);
+                console.error(err);
+            }
         };
 
         function setupDataChannel() {
