@@ -11,6 +11,14 @@ fn format_hex(data: &[u8], pairs_per_line: usize) -> String {
     let hex_pairs: Vec<String> = data.iter()
         .map(|b| format!("{:02x}", b))
         .map(|it| it.to_uppercase())
+        .map(|it| {
+            if it == "D" // D sometimes recognized as 0
+            {
+                "X".to_string()
+            } else {
+                it
+            }
+        })
         .collect();
 
     hex_pairs
