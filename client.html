@@ -13,7 +13,7 @@
         </label>
         <label>
             <input type="radio" name="inputType" value="hex"> 
-            HEX (где D это X, 0 это H)
+            HEX (где D это X, 0 это P)
         </label>
     </div>
     <br>
@@ -56,10 +56,11 @@
                 .replace(/X/g, 'D')  // английская X -> D
                 .replace(/x/g, 'D')  // английская x -> D
 
-                // H:
-                .replace(/Н/g, '0')  // кириллическая Н -> 0
-                .replace(/н/g, '0')  // кириллическая н -> 0
-                .replace(/H/g, '0');  // английская H -> 0
+                // P:
+                .replace(/Р/g, '0')
+                .replace(/р/g, '0')
+                .replace(/P/g, '0')
+                .replace(/p/g, '0');
             
             // Удаляем все не-hex символы (пробелы, дефисы, переводы строк, табы и т.д.)
             const cleaned = latinized.replace(/[^0-9a-fA-F]/g, '');
