@@ -14,6 +14,9 @@ fn format_hex(data: &[u8], pairs_per_line: usize) -> String {
         .map(|it| {
             it.replace("D", "X") // D sometimes recognized as 0
         })
+        .map(|it| {
+            it.replace("0", "H") // 0 sometimes recognized as 9
+        })
         .collect();
 
     hex_pairs
@@ -68,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     
     // HEX
     let formatted = format_hex(sdp_bytes, 30);
-    println!("=== COPY TO BROWSER (HEX where D is X) ===\n\n{}\n", formatted);
+    println!("=== COPY TO BROWSER (HEX where D=X and 0=H) ===\n\n{}\n", formatted);
     
     println!("Paste answer here and press Enter:");
     let stdin = BufReader::new(tokio::io::stdin());
