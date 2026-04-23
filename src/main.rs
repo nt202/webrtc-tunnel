@@ -15,7 +15,7 @@ fn format_hex(data: &[u8], pairs_per_line: usize) -> String {
             it.replace("D", "X") // D sometimes recognized as 0
         })
         .map(|it| {
-            it.replace("0", "P") // 0 sometimes recognized as 9
+            it.replace("0", "T") // 0 sometimes recognized as 9
         })
         .collect();
 
