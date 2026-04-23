@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
     
     // HEX
     let formatted = format_hex(sdp_bytes, 30);
-    println!("=== COPY TO BROWSER (HEX) ===\n\n{}\n", formatted);
+    println!("=== COPY TO BROWSER (HEX where D is X) ===\n\n{}\n", formatted);
     
     println!("Paste answer here and press Enter:");
     let stdin = BufReader::new(tokio::io::stdin());
