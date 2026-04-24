@@ -9,6 +9,19 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+fn format_hex(data: &[u8], pairs_per_line: usize) -> String {
+    let hex_pairs: Vec<String> = data.iter()
+        .map(|b| format!("{:02x}", b))
+        .map(|it| it.to_uppercase())
+        .collect();
+
+    hex_pairs
+        .chunks(pairs_per_line)
+        .map(|chunk| chunk.join("-"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -71,7 +84,15 @@ async fn main() -> anyhow::Result<()> {
     }
     
     let local_desc = peer_connection.local_description().await.unwrap();
-    println!("\n=== COPY TO BROWSER ===\n{}\n", serde_json::to_string(&local_desc)?);
+    let sdp = serde_json::to_string(&local_desc)?;
+    let sdp_bytes = sdp.as_bytes();
+    
+    // JSON
+    println!("\n=== COPY TO BROWSER (JSON) ===\n{}\n", sdp);
+    
+    // HEX
+    let formatted = format_hex(sdp_bytes, 30);
+    println!("=== COPY TO BROWSER (HEX) ===\n\n{}\n", formatted);
     
     // Ждём data channel
     let data_channel = dc_rx.recv().await.unwrap();
