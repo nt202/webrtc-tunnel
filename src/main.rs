@@ -1,4 +1,6 @@
 use webrtc::api::APIBuilder;
+use webrtc::api::setting_engine::SettingEngine;
+use webrtc::ice::network_type::NetworkType;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
@@ -25,15 +27,26 @@ async fn main() -> anyhow::Result<()> {
     env_logger::init();
     let http_client = reqwest::Client::new();
     
+    // === ОТКЛЮЧАЕМ IPv6 ===
+    let mut setting_engine = SettingEngine::default();
+    setting_engine.set_network_types(vec![NetworkType::Udp4]);
+    
+    let api = APIBuilder::new()
+        .with_setting_engine(setting_engine)
+        .build();
+    
     let config = RTCConfiguration {
         ice_servers: vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+            urls: vec![
+                "stun:stun.sipgate.net:10000".to_owned(),
+                "stun:stun.ekiga.net:3478".to_owned(),
+                "stun:stun.nextcloud.com:3478".to_owned(),
+            ],
             ..Default::default()
         }],
         ..Default::default()
     };
     
-    let api = APIBuilder::new().build();
     let peer_connection = Arc::new(api.new_peer_connection(config).await?);
     
     let data_channel = peer_connection.create_data_channel("http-tunnel", None).await?;
@@ -74,10 +87,9 @@ async fn main() -> anyhow::Result<()> {
         })
     }));
     
-    // Таймаут на сбор ICE (5 секунд)
     tokio::select! {
         _ = ice_rx.recv() => {},
-        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
+        _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
             eprintln!("ICE gathering timeout, proceeding with partial candidates");
         }
     }
