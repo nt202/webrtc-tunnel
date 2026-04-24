@@ -54,16 +54,39 @@ async fn main() -> anyhow::Result<()> {
     let offer = peer_connection.create_offer(None).await?;
     peer_connection.set_local_description(offer).await?;
     
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    // === ЖДЁМ СБОРА ICE-КАНДИДАТОВ ===
+    let (ice_tx, mut ice_rx) = mpsc::unbounded_channel::<()>();
+    let ice_tx2 = ice_tx.clone();
+        
+    peer_connection.on_ice_candidate(Box::new(move |candidate| {
+        let tx = ice_tx2.clone();
+        Box::pin(async move {
+            match candidate {
+                Some(c) => {
+                    println!("ICE candidate: {}", c.to_string());
+                }
+                None => {
+                    println!("ICE gathering complete!");
+                    let _ = tx.send(());
+                }
+            }
+        })
+    }));
+    
+    // Таймаут на сбор ICE (5 секунд)
+    tokio::select! {
+        _ = ice_rx.recv() => {},
+        _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
+            eprintln!("ICE gathering timeout, proceeding with partial candidates");
+        }
+    }
     
     let local_desc = peer_connection.local_description().await.unwrap();
     let sdp = serde_json::to_string(&local_desc)?;
     let sdp_bytes = sdp.as_bytes();
     
-    // JSON
     println!("\n=== COPY TO BROWSER (JSON) ===\n{}\n", sdp);
     
-    // HEX
     let formatted = format_hex(sdp_bytes, 30);
     println!("=== COPY TO BROWSER (HEX) ===\n\n{}\n", formatted);
     
