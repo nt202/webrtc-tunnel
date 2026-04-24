@@ -22,6 +22,7 @@ fn format_hex(data: &[u8], pairs_per_line: usize) -> String {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::init();
     let http_client = reqwest::Client::new();
     
     let config = RTCConfiguration {
