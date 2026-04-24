@@ -9,25 +9,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-fn format_hex(data: &[u8], pairs_per_line: usize) -> String {
-    let hex_pairs: Vec<String> = data.iter()
-        .map(|b| format!("{:02x}", b))
-        .map(|it| it.to_uppercase())
-        .collect();
-
-    hex_pairs
-        .chunks(pairs_per_line)
-        .map(|chunk| chunk.join("-"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
     let http_client = reqwest::Client::new();
     
-    // === ОТКЛЮЧАЕМ IPv6 ===
     let mut setting_engine = SettingEngine::default();
     setting_engine.set_network_types(vec![NetworkType::Udp4]);
     
@@ -49,9 +35,49 @@ async fn main() -> anyhow::Result<()> {
     
     let peer_connection = Arc::new(api.new_peer_connection(config).await?);
     
-    let data_channel = peer_connection.create_data_channel("http-tunnel", None).await?;
-    let dc_clone = data_channel.clone();
+    // Ждём data channel от браузера
+    let (dc_tx, mut dc_rx) = mpsc::unbounded_channel();
+    peer_connection.on_data_channel(Box::new(move |dc| {
+        let tx = dc_tx.clone();
+        Box::pin(async move {
+            let _ = tx.send(dc);
+        })
+    }));
     
+    // Читаем offer из stdin
+    println!("Paste offer from browser and press Enter:");
+    let stdin = BufReader::new(tokio::io::stdin());
+    let mut lines = stdin.lines();
+    let offer_json = lines.next_line().await?.unwrap();
+    let offer: RTCSessionDescription = serde_json::from_str(&offer_json)?;
+    
+    peer_connection.set_remote_description(offer).await?;
+    
+    let answer = peer_connection.create_answer(None).await?;
+    peer_connection.set_local_description(answer).await?;
+    
+    // Ждём ICE gathering
+    let (ice_tx, mut ice_rx) = mpsc::unbounded_channel::<()>();
+    peer_connection.on_ice_candidate(Box::new(move |c| {
+        let tx = ice_tx.clone();
+        Box::pin(async move {
+            if c.is_none() { let _ = tx.send(()); }
+        })
+    }));
+    
+    tokio::select! {
+        _ = ice_rx.recv() => {},
+        _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {},
+    }
+    
+    let local_desc = peer_connection.local_description().await.unwrap();
+    println!("\n=== COPY TO BROWSER ===\n{}\n", serde_json::to_string(&local_desc)?);
+    
+    // Ждём data channel
+    let data_channel = dc_rx.recv().await.unwrap();
+    
+    // Настраиваем HTTP-прокси
+    let dc_clone = data_channel.clone();
     data_channel.on_message(Box::new(move |msg| {
         let http_client = http_client.clone();
         let dc = dc_clone.clone();
@@ -65,57 +91,12 @@ async fn main() -> anyhow::Result<()> {
         })
     }));
     
-    let offer = peer_connection.create_offer(None).await?;
-    peer_connection.set_local_description(offer).await?;
-    
-    // === ЖДЁМ СБОРА ICE-КАНДИДАТОВ ===
-    let (ice_tx, mut ice_rx) = mpsc::unbounded_channel::<()>();
-    let ice_tx2 = ice_tx.clone();
-        
-    peer_connection.on_ice_candidate(Box::new(move |candidate| {
-        let tx = ice_tx2.clone();
-        Box::pin(async move {
-            match candidate {
-                Some(c) => {
-                    println!("ICE candidate: {}", c.to_string());
-                }
-                None => {
-                    println!("ICE gathering complete!");
-                    let _ = tx.send(());
-                }
-            }
-        })
-    }));
-    
-    tokio::select! {
-        _ = ice_rx.recv() => {},
-        _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
-            eprintln!("ICE gathering timeout, proceeding with partial candidates");
-        }
-    }
-    
-    let local_desc = peer_connection.local_description().await.unwrap();
-    let sdp = serde_json::to_string(&local_desc)?;
-    let sdp_bytes = sdp.as_bytes();
-    
-    println!("\n=== COPY TO BROWSER (JSON) ===\n{}\n", sdp);
-    
-    let formatted = format_hex(sdp_bytes, 30);
-    println!("=== COPY TO BROWSER (HEX) ===\n\n{}\n", formatted);
-    
-    println!("Paste answer here and press Enter:");
-    let stdin = BufReader::new(tokio::io::stdin());
-    let mut lines = stdin.lines();
-    let answer_json = lines.next_line().await?.unwrap();
-    let answer: RTCSessionDescription = serde_json::from_str(&answer_json)?;
-    
-    peer_connection.set_remote_description(answer).await?;
-    
+    // Ждём подключения
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let pc = peer_connection.clone();
-    pc.on_peer_connection_state_change(Box::new(move |state| {
+    peer_connection.on_peer_connection_state_change(Box::new(move |state| {
         let tx = tx.clone();
         Box::pin(async move {
+            println!("State: {:?}", state);
             if state == RTCPeerConnectionState::Connected {
                 let _ = tx.send(());
             }
@@ -123,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
     }));
     
     rx.recv().await;
-    println!("Tunnel ready. Press Ctrl+C to stop.");
+    println!("Tunnel ready!");
     tokio::signal::ctrl_c().await?;
     
     Ok(())
