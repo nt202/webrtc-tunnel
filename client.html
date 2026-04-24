@@ -3,68 +3,105 @@
 <head>
     <meta charset="UTF-8">
     <title>WebRTC Tunnel Client (Initiator)</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        #tunnelPanel { 
+            border: 2px solid #333; 
+            padding: 15px; 
+            margin-bottom: 20px;
+            background: #f5f5f5;
+        }
+        #browserFrame { 
+            width: 100%; 
+            height: 600px; 
+            border: 2px solid #666;
+            background: white;
+        }
+        #iceLog { 
+            border: 1px solid #ccc; 
+            padding: 10px; 
+            max-height: 150px; 
+            overflow: auto; 
+            font-size: 11px;
+            background: #fafafa;
+        }
+        .panel-title { margin: 0 0 10px 0; font-size: 16px; }
+        textarea { font-family: monospace; font-size: 12px; }
+        button { padding: 6px 14px; margin: 2px; cursor: pointer; }
+        #status { font-weight: bold; color: #666; }
+        #status.connected { color: green; }
+        #status.error { color: red; }
+    </style>
 </head>
 <body>
-    <h2>WebRTC Tunnel — Browser initiates</h2>
-    
-    <div>
-        <label>
-            <input type="radio" name="outputType" value="json" checked> 
-            Обычный JSON
-        </label>
-        <label>
-            <input type="radio" name="outputType" value="hex"> 
-            HEX
-        </label>
+
+    <!-- === ПАНЕЛЬ УПРАВЛЕНИЯ ТУННЕЛЕМ === -->
+    <div id="tunnelPanel">
+        <h2 class="panel-title">🔌 WebRTC Tunnel — Browser initiates</h2>
+        
+        <div>
+            <label><input type="radio" name="outputType" value="json" checked> Обычный JSON</label>
+            <label><input type="radio" name="outputType" value="hex"> HEX</label>
+        </div>
+        <br>
+        
+        <button id="createOffer">Создать Offer</button>
+        <br><br>
+        
+        <h4>Offer (скопируй в терминал RPi):</h4>
+        <textarea id="offer" rows="4" cols="80" readonly></textarea>
+        
+        <hr style="margin: 15px 0;">
+        
+        <div>
+            <label><input type="radio" name="inputType" value="json" checked> Обычный JSON</label>
+            <label><input type="radio" name="inputType" value="hex"> HEX</label>
+        </div>
+        <br>
+        
+        <h4>Вставь answer из RPi:</h4>
+        <textarea id="answer" rows="4" cols="80" placeholder="Вставь сюда answer из терминала"></textarea>
+        <br>
+        <button id="connect">Подключиться</button>
+        
+        <p>Статус: <span id="status">Не подключено</span></p>
+        <pre id="iceLog"></pre>
     </div>
-    <br>
-    
-    <button id="createOffer">Создать Offer</button>
-    <br><br>
-    <h3>Offer (скопируй в терминал RPi):</h3>
-    <textarea id="offer" rows="5" cols="80" readonly></textarea>
-    
-    <hr>
-    
+
+    <!-- === БРАУЗЕР ВНУТРИ БРАУЗЕРА === -->
     <div>
-        <label>
-            <input type="radio" name="inputType" value="json" checked> 
-            Обычный JSON
-        </label>
-        <label>
-            <input type="radio" name="inputType" value="hex"> 
-            HEX
-        </label>
+        <h3>🌐 Прокси-браузер</h3>
+        <div style="margin-bottom: 10px;">
+            <input type="text" id="urlBar" value="/" size="50" placeholder="URL (например / или /api/data)"/>
+            <button id="navigate">Перейти</button>
+            <button id="back">← Назад</button>
+            <button id="forward">Вперёд →</button>
+        </div>
+        <iframe id="browserFrame" sandbox="allow-same-origin allow-scripts allow-forms" src="about:blank"></iframe>
     </div>
-    <br>
-    
-    <h3>Вставь answer из RPi:</h3>
-    <textarea id="answer" rows="5" cols="80" placeholder="Вставь сюда answer из терминала"></textarea>
-    <br>
-    <button id="connect">Подключиться</button>
-    
-    <p id="status">Не подключено</p>
-    <pre id="iceLog" style="border:1px solid #ccc; padding:10px; max-height:200px; overflow:auto; font-size:10px;"></pre>
-    
-    <hr>
-    <input type="text" id="url" value="/" size="50" placeholder="URL (например / или /api/data)"/>
-    <button id="send">Запросить</button>
-    <div id="output" style="border:1px solid #ccc; padding:10px; margin-top:10px;"></div>
 
     <script>
         let dataChannel = null;
         let peerConnection = null;
+        let historyStack = [];
+        let historyIndex = -1;
 
         function log(msg) {
             console.log(msg);
-            document.getElementById('iceLog').innerHTML += msg + '\n';
+            const iceLog = document.getElementById('iceLog');
+            iceLog.textContent += msg + '\n';
+            iceLog.scrollTop = iceLog.scrollHeight;
+        }
+
+        function setStatus(text, cls) {
+            const el = document.getElementById('status');
+            el.textContent = text;
+            el.className = cls || '';
         }
 
         function hexToBytes(hexStr) {
             const cleaned = hexStr.replace(/[^0-9a-fA-F]/g, '');
-            if (cleaned.length % 2 !== 0) {
-                throw new Error('Нечётное количество hex-символов');
-            }
+            if (cleaned.length % 2 !== 0) throw new Error('Нечётное количество hex-символов');
             const bytes = new Uint8Array(cleaned.length / 2);
             for (let i = 0; i < cleaned.length; i += 2) {
                 bytes[i / 2] = parseInt(cleaned.substring(i, i + 2), 16);
@@ -76,8 +113,8 @@
             return new TextDecoder().decode(bytes);
         }
 
+        // === СОЗДАНИЕ OFFER ===
         document.getElementById('createOffer').onclick = async () => {
-            // === РАБОЧИЕ STUN-СЕРВЕРЫ ===
             peerConnection = new RTCPeerConnection({
                 iceServers: [
                     { urls: 'stun:stun1.l.google.com:19302' },
@@ -86,10 +123,10 @@
                 ]
             });
             
-            // === ЛОГИРОВАНИЕ СОСТОЯНИЯ ===
             peerConnection.onconnectionstatechange = () => {
                 log('Connection state: ' + peerConnection.connectionState);
-                document.getElementById('status').innerHTML = peerConnection.connectionState;
+                setStatus(peerConnection.connectionState, 
+                    peerConnection.connectionState === 'connected' ? 'connected' : '');
             };
             
             peerConnection.oniceconnectionstatechange = () => {
@@ -100,13 +137,14 @@
                 log('Signaling state: ' + peerConnection.signalingState);
             };
             
-            dataChannel = peerConnection.createDataChannel('http-tunnel');
+            dataChannel = peerConnection.createDataChannel('http-tunnel', {
+                ordered: true
+            });
             setupDataChannel();
             
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
             
-            // Ждём ICE gathering с логами
             await new Promise(resolve => {
                 peerConnection.onicecandidate = (e) => {
                     if (e.candidate) {
@@ -136,6 +174,7 @@
             }
         };
 
+        // === ПОДКЛЮЧЕНИЕ ПО ANSWER ===
         document.getElementById('connect').onclick = async () => {
             const rawInput = document.getElementById('answer').value;
             if (!rawInput) {
@@ -155,47 +194,168 @@
                 }
 
                 const answer = JSON.parse(answerSdp);
-                
-                // Логируем remote кандидаты из answer
                 log('Setting remote description...');
                 await peerConnection.setRemoteDescription(answer);
                 
-                // Парсим кандидаты из SDP для логов
                 const candidates = answer.sdp.match(/a=candidate:[^\r\n]+/g) || [];
                 candidates.forEach(c => log('Remote ICE: ' + c));
                 
-                document.getElementById('status').innerHTML = 'Подключение...';
+                setStatus('Подключение...');
             } catch (err) {
                 alert('Ошибка: ' + err.message);
                 console.error(err);
             }
         };
 
+        // === ОБРАБОТКА DATACHANNEL ===
         function setupDataChannel() {
             dataChannel.onopen = () => {
                 log('DataChannel OPEN');
-                document.getElementById('status').innerHTML = 'Канал открыт!';
+                setStatus('Канал открыт!', 'connected');
             };
+            
             dataChannel.onmessage = (e) => {
-                document.getElementById('output').innerHTML = e.data;
+                handleResponse(e.data);
             };
+            
             dataChannel.onerror = (error) => {
                 log('DataChannel ERROR: ' + error);
+                setStatus('Ошибка канала', 'error');
             };
+            
             dataChannel.onclose = () => {
                 log('DataChannel CLOSED');
+                setStatus('Канал закрыт');
             };
         }
 
-        document.getElementById('send').onclick = () => {
+        // === ОБРАБОТКА ОТВЕТА ОТ СЕРВЕРА ===
+        function handleResponse(htmlOrData) {
+            const frame = document.getElementById('browserFrame');
+            
+            // Создаём blob с правильным base URL для относительных ссылок
+            const blob = new Blob([htmlOrData], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            
+            // Загружаем в iframe
+            frame.src = url;
+            
+            // После загрузки — перехватываем ссылки
+            frame.onload = () => {
+                try {
+                    hijackLinks(frame);
+                } catch (err) {
+                    log('hijackLinks error: ' + err.message);
+                }
+                // Чистим blob URL (iframe уже загрузил)
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            };
+        }
+
+        // === ПЕРЕХВАТ ССЫЛОК В IFRAME ===
+        function hijackLinks(frame) {
+            const doc = frame.contentDocument || frame.contentWindow.document;
+            if (!doc) {
+                log('Cannot access iframe document');
+                return;
+            }
+
+            // Перехватываем клики по ссылкам
+            doc.addEventListener('click', (e) => {
+                const link = e.target.closest('a');
+                if (!link) return;
+
+                const href = link.getAttribute('href');
+                if (!href) return;
+
+                // Пропускаем внешние ссылки (открываем в новой вкладке)
+                if (href.startsWith('http://') || href.startsWith('https://') || href.startsWith('//')) {
+                    return; // стандартное поведение
+                }
+
+                e.preventDefault();
+                e.stopPropagation();
+
+                // Отправляем через туннель
+                log('Navigating to: ' + href);
+                document.getElementById('urlBar').value = href;
+                pushHistory(href);
+                sendRequest(href);
+            });
+
+            // Перехватываем отправку форм
+            doc.addEventListener('submit', (e) => {
+                const form = e.target;
+                const action = form.getAttribute('action') || '';
+                const method = (form.getAttribute('method') || 'GET').toUpperCase();
+
+                e.preventDefault();
+
+                const formData = new FormData(form);
+                const params = new URLSearchParams(formData).toString();
+                
+                let url = action;
+                if (method === 'GET' && params) {
+                    url += (url.includes('?') ? '&' : '?') + params;
+                }
+
+                log('Form submit: ' + method + ' ' + url);
+                document.getElementById('urlBar').value = url;
+                pushHistory(url);
+                sendRequest(url);
+            });
+
+            log('Links hijacked: ' + doc.querySelectorAll('a[href]').length);
+        }
+
+        // === ИСТОРИЯ НАВИГАЦИИ ===
+        function pushHistory(url) {
+            // Удаляем всё впереди если мы не в конце
+            historyStack = historyStack.slice(0, historyIndex + 1);
+            historyStack.push(url);
+            historyIndex++;
+        }
+
+        document.getElementById('navigate').onclick = () => {
+            const url = document.getElementById('urlBar').value;
+            if (!url) return;
+            pushHistory(url);
+            sendRequest(url);
+        };
+
+        document.getElementById('urlBar').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') document.getElementById('navigate').click();
+        });
+
+        document.getElementById('back').onclick = () => {
+            if (historyIndex > 0) {
+                historyIndex--;
+                const url = historyStack[historyIndex];
+                document.getElementById('urlBar').value = url;
+                sendRequest(url);
+            }
+        };
+
+        document.getElementById('forward').onclick = () => {
+            if (historyIndex < historyStack.length - 1) {
+                historyIndex++;
+                const url = historyStack[historyIndex];
+                document.getElementById('urlBar').value = url;
+                sendRequest(url);
+            }
+        };
+
+        // === ОТПРАВКА ЗАПРОСА ЧЕРЕЗ ТУННЕЛЬ ===
+        function sendRequest(url) {
             if (!dataChannel || dataChannel.readyState !== 'open') {
                 alert('Канал не открыт');
                 return;
             }
-            const url = document.getElementById('url').value;
             dataChannel.send(url);
-            document.getElementById('output').innerHTML = 'Загрузка...';
-        };
+        }
+
+        // Инициализация
+        log('Client ready. Click "Создать Offer" to start.');
     </script>
 </body>
 </html>
