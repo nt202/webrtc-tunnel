@@ -37,9 +37,10 @@ async fn main() -> anyhow::Result<()> {
     let config = RTCConfiguration {
         ice_servers: vec![RTCIceServer {
             urls: vec![
-                "stun:stun.sipgate.net:10000".to_owned(),
-                "stun:stun.ekiga.net:3478".to_owned(),
-                "stun:stun.nextcloud.com:3478".to_owned(),
+                "stun:stun1.l.google.com:19302".to_owned(),
+                // "stun:stun.sipgate.net:10000".to_owned(),
+                // "stun:stun.ekiga.net:3478".to_owned(),
+                // "stun:stun.nextcloud.com:3478".to_owned(),
             ],
             ..Default::default()
         }],
